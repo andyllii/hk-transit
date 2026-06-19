@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">HK Transit</string>
+    <string name="title_activity_main">HK Transit</string>
+    <string name="package_name">com.hktransit.app</string>
+    <string name="custom_url_scheme">com.hktransit.app</string>
+</resources>

@@ -1,0 +1,24 @@
+{
+  "appId": "com.hktransit.app",
+  "appName": "HK Transit",
+  "webDir": "src",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1500,
+      "backgroundColor": "#1c1b1f",
+      "androidSplashResourceName": "splash",
+      "androidScaleType": "CENTER_CROP",
+      "showSpinner": false,
+      "splashFullScreen": true,
+      "layoutName": "launch_screen"
+    },
+    "StatusBar": {
+      "style": "DARK",
+      "backgroundColor": "#1c1b1f",
+      "overlaysWebView": false
+    }
+  }
+}
