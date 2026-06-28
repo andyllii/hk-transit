@@ -2927,11 +2927,12 @@ async function searchBus(q){
       const key = `${r.route}-${r.bound}-${r.service_type}`;
       if(renderCTBRoute._seen?.has(key)) return '';
       (renderCTBRoute._seen = renderCTBRoute._seen || new Set()).add(key);
+      const dirText = r.bound==='I' ? 'Inbound' : r.bound==='O' ? 'Outbound' : 'Both directions';
       return `<div class="route-pill" data-cb-route="${escapeHTML(r.route)}" data-cb-bound="${escapeHTML(r.bound)}" style="margin:0 14px 6px">
         <div class="rcode">${escapeHTML(r.route)}</div>
         <div class="rmeta">
           <div class="o">${escapeHTML(r.orig_tc||r.orig_en||'')} → ${escapeHTML(r.dest_tc||r.dest_en||'')}</div>
-          <div class="d">${escapeHTML(r.orig_en||'')} → ${escapeHTML(r.dest_en||'')} · ${r.bound==='I'?'Inbound':'Outbound'}</div>
+          <div class="d">${escapeHTML(r.orig_en||'')} → ${escapeHTML(r.dest_en||'')} · ${dirText}</div>
         </div>
         <div class="company-badge ctb">城巴</div>
         <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></div>
@@ -3162,6 +3163,29 @@ async function ensureCitybusRoutes(){
   try{localStorage.setItem(cacheKey, JSON.stringify({t:Date.now(),data:STATE.citybusRoutes}))}catch(e){}
   return STATE.citybusRoutes;
 }
+async function ensureCitybusStopDetails(stopIds){
+  const ids = Array.from(new Set((stopIds || []).filter(Boolean)));
+  const cacheKey = 'hk_citybus_stops_v1';
+  let cache = {};
+  try{
+    const cached = localStorage.getItem(cacheKey);
+    if(cached){
+      const c = JSON.parse(cached);
+      if(Date.now() - c.t < 30*24*3600e3) cache = c.data || {};
+    }
+  }catch(e){}
+  const missing = ids.filter(id => !cache[id]);
+  if(missing.length){
+    const results = await Promise.allSettled(missing.map(id =>
+      fetchJSON(`https://rt.data.gov.hk/v2/transport/citybus/stop/${encodeURIComponent(id)}`).then(j => ({id, data:j?.data || null}))
+    ));
+    for(const r of results){
+      if(r.status === 'fulfilled' && r.value.data) cache[r.value.id] = r.value.data;
+    }
+    try{localStorage.setItem(cacheKey, JSON.stringify({t:Date.now(),data:cache}))}catch(e){}
+  }
+  return Object.fromEntries(ids.map(id => [id, cache[id] || null]));
+}
 
 /* ------- Ferry (HKKF inter-island kaito) ------- */
 async function ensureFerryRoutes(){
@@ -3262,16 +3286,18 @@ async function searchCitybusRoute(q){
       out.innerHTML = `<div class="empty" style="padding:60px 20px"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/></svg></div><div class="ttl">沒有結果</div><div class="msg">No Citybus routes match "${q}".</div></div>`;
       return;
     }
-    out.innerHTML = `<div style="padding:0 18px 8px;font-family:var(--font-mono);font-size:10px;color:var(--ink-2);text-transform:uppercase;letter-spacing:0.14em">${matches.length} 條城巴路線 · Citybus routes</div>` + matches.map(r=>`
-      <div class="route-pill" data-cb-route="${r.route}" data-cb-bound="${r.bound}" style="margin:0 14px 6px">
-        <div class="rcode">${r.route}</div>
+    out.innerHTML = `<div style="padding:0 18px 8px;font-family:var(--font-mono);font-size:10px;color:var(--ink-2);text-transform:uppercase;letter-spacing:0.14em">${matches.length} 條城巴路線 · Citybus routes</div>` + matches.map(r=>{
+      const dirText = r.bound==='I' ? 'Inbound' : r.bound==='O' ? 'Outbound' : 'Both directions';
+      return `
+      <div class="route-pill" data-cb-route="${escapeHTML(r.route)}" data-cb-bound="${escapeHTML(r.bound)}" style="margin:0 14px 6px">
+        <div class="rcode">${escapeHTML(r.route)}</div>
         <div class="rmeta">
-          <div class="o">${r.orig_tc||r.orig_en} → ${r.dest_tc||r.dest_en}</div>
-          <div class="d">${r.orig_en} → ${r.dest_en}</div>
+          <div class="o">${escapeHTML(r.orig_tc||r.orig_en||'')} → ${escapeHTML(r.dest_tc||r.dest_en||'')}</div>
+          <div class="d">${escapeHTML(r.orig_en||'')} → ${escapeHTML(r.dest_en||'')} · ${dirText}</div>
         </div>
         <div class="arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></div>
-      </div>
-    `).join('');
+      </div>`;
+    }).join('');
     $$('[data-cb-route]',out).forEach(el=>el.addEventListener('click',()=>openCitybusBoard(el.dataset.cbRoute,el.dataset.cbBound)));
   }catch(e){
     out.innerHTML = `<div class="error" style="padding:40px 20px"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg></div><div class="ttl">載入失敗</div><div class="msg">${e.message||'Network error'}</div><button class="retry" onclick="searchCitybusRoute('${q}')">重試 RETRY</button></div>`;
@@ -3507,13 +3533,16 @@ async function openCitybusBoard(route, bound){
       }catch(e){}
     }
     if(!allStops.length) throw new Error('No stops found for this route');
+
+    const stopDetails = await ensureCitybusStopDetails(allStops.map(s => s.stop));
+    const stops = allStops.map(s => ({...s, ...(stopDetails[s.stop] || {})}));
     
-    // Fetch ETAs for the first N stops
-    const etaResults = await Promise.allSettled(allStops.slice(0, 20).map(s =>
+    // Fetch ETAs for the visible stops.
+    const etaResults = await Promise.allSettled(stops.slice(0, 40).map(s =>
       fetchJSON(`https://rt.data.gov.hk/v2/transport/citybus/eta/ctb/${s.stop}/${encodeURIComponent(route)}`).catch(()=>({data:[]}))
     ));
     
-    renderCitybusBoard(route, bound, allStops, etaResults);
+    renderCitybusBoard(route, bound, stops, etaResults);
     if(STATE.refreshTimer) clearInterval(STATE.refreshTimer);
     STATE.refreshTimer = setInterval(()=>openCitybusBoard(route,bound), 45000);
   }catch(e){
@@ -3524,13 +3553,14 @@ function renderCitybusBoard(route, bound, stops, etaResults){
   const board = $('#boardContent');
   const firstStop = stops[0];
   const firstEta = etaResults[0]?.value?.data?.[0];
+  const dirText = bound==='I' ? '入 · Inbound' : bound==='O' ? '出 · Outbound' : '雙向 · Both directions';
   
   board.innerHTML = `
     <div class="board-head">
       <div>
         <span class="board-line-pill" style="--line-bg:#0ea5b7"><span class="swatch"></span>CTB</span>
         <div class="board-station">${escapeHTML(route)}</div>
-        <div class="board-station-tc">${bound==='I'?'入 · Inbound':'出 · Outbound'} · ${stops.length} 站 stops</div>
+        <div class="board-station-tc">${dirText} · ${stops.length} 站 stops</div>
       </div>
     </div>
     <div class="status-strip"><span class="dot"></span><span class="txt">服務正常 · <strong>Live</strong> · Auto-refresh 45s</div>
@@ -3544,8 +3574,8 @@ function renderCitybusBoard(route, bound, stops, etaResults){
       </div>
     </div>
     <div class="train-list">
-      ${stops.slice(0,20).map((s,i)=>{
-        const eta = etaResults[i]?.value?.data?.find(e => e.dir === s.dir);
+      ${stops.slice(0,40).map((s,i)=>{
+        const eta = etaResults[i]?.value?.data?.find(e => e.dir === s.dir && String(e.seq) === String(s.seq)) || etaResults[i]?.value?.data?.find(e => e.dir === s.dir);
         const e = eta ? etaText(minsFromIso(eta.eta)) : null;
         const arrTime = eta ? new Date(eta.eta).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',hour12:false}) : '';
         return `<div class="eta-row ${e?.soon?'soon':''}">
